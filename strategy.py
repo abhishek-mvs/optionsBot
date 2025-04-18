@@ -291,6 +291,7 @@ def main():
    adjustments_count = 0
    while True:
        time.sleep(15 * 60)  # wait 15 minutes
+       logging.info("Rebalancing delta")
        adjusted = rebalance_delta(position, expiry)
        if adjusted:
            adjustments_count += 1

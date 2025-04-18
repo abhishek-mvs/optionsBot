@@ -1,7 +1,8 @@
 import time
 import requests
 import csv
-from datetime import datetime, UTC
+# from datetime import datetime, UTC
+from datetime import datetime, timezone
 from bybit_apis import DMABybit
 import os
 from dotenv import load_dotenv
@@ -31,7 +32,7 @@ with open(LOG_FILE, mode='w', newline='') as f:
  
 def log_trade(symbol, side, qty, price, realized_pnl):
    """Log the trade details and P&L to the CSV file."""
-   timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+   timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
    with open(LOG_FILE, mode='a', newline='') as f:
        writer = csv.writer(f)
        writer.writerow([timestamp, symbol, side, qty, price, f"{realized_pnl:.4f}"])

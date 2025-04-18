@@ -1,7 +1,7 @@
 import time
 import requests
 import csv
-from datetime import datetime
+from datetime import datetime, UTC
 from bybit_apis import DMABybit
 import os
 from dotenv import load_dotenv
@@ -31,7 +31,7 @@ with open(LOG_FILE, mode='w', newline='') as f:
  
 def log_trade(symbol, side, qty, price, realized_pnl):
    """Log the trade details and P&L to the CSV file."""
-   timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+   timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
    with open(LOG_FILE, mode='a', newline='') as f:
        writer = csv.writer(f)
        writer.writerow([timestamp, symbol, side, qty, price, f"{realized_pnl:.4f}"])
@@ -283,7 +283,7 @@ def main():
    logging.info("Starting strategy execution")
    # Define which expiry to trade, e.g., use nearest expiry or a specified one
    # For example, let's pick the closest weekly expiration by default:
-   expiry = "19APR25"  # None means all expiries; we could refine if needed.
+   expiry = "20APR25"  # None means all expiries; we could refine if needed.
    # Step 1: Enter position on IV spike
    position = enter_delta_neutral_position(expiry)
    # Step 2: Rebalance periodically until conversion condition met or until expiry

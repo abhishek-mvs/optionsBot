@@ -184,13 +184,14 @@ def enter_delta_neutral_position(expiry=None):
    log_trade(put_symbol,  "Sell", 1, entry_put_price,  realized_pnl=0.0)
    # Return a structure representing current position state
    position_state = {
-       "call": {"symbol": call_symbol, "delta": selected_call_info["delta"], "entry_price": entry_call_price, "contracts": 0.01},
-       "put":  {"symbol": put_symbol,  "delta": selected_put_info["delta"],  "entry_price": entry_put_price,  "contracts": 0.01}
+       "call": {"symbol": call_symbol, "delta": selected_call_info["delta"], "entry_price": entry_call_price, "contracts": 1},
+       "put":  {"symbol": put_symbol,  "delta": selected_put_info["delta"],  "entry_price": entry_put_price,  "contracts": 1}
    }
    return position_state
  
 def rebalance_delta(position_state, expiry=None):
    """Check portfolio delta and rebalance if outside ±0.1 by adjusting the appropriate leg."""
+   logging.info(f"Rebalancing delta: {position_state}")
    data = get_iv_and_greeks(expiry)
    # Calculate current net delta of the portfolio
    call_sym = position_state["call"]["symbol"]
@@ -214,15 +215,16 @@ def rebalance_delta(position_state, expiry=None):
    # Decide adjustment: we will add one more short contract on the weaker side
    adjust_symbol = position_state[leg_to_adjust]["symbol"]
    # Place additional short order on that leg
+   price = data.get(adjust_symbol, {}).get("bid") or data.get(adjust_symbol, {}).get("ask") or 0.0
    order_id = place_order(side="Buy", symbol=adjust_symbol, qty=0.01)
    log_trade(adjust_symbol, "Buy", 0.01, price, realized_pnl=0.0)
    # Update position_state: increment contract count
    new_adjust_symbol = get_position_near_delta(data, leg_to_adjust, abs(put_delta) if leg_to_adjust == "call" else abs(call_delta))
    order_id_new_symbol = place_order(side="Sell", symbol=new_adjust_symbol, qty=0.01)
-   position_state[leg_to_adjust] = {"symbol": new_adjust_symbol,  "delta": data.get(new_adjust_symbol, {}).get("delta", 0),  "entry_price": data.get(new_adjust_symbol, {}).get("bid") or data.get(new_adjust_symbol, {}).get("ask") or 0.0,  "contracts": 0.01}
+   new_adjust_price = data.get(new_adjust_symbol, {}).get("bid") or data.get(new_adjust_symbol, {}).get("ask") or 0.0
+   position_state[leg_to_adjust] = {"symbol": new_adjust_symbol,  "delta": data.get(new_adjust_symbol, {}).get("delta", 0),  "entry_price": new_adjust_price,  "contracts": 1}
    # Log the adjustment trade. Realized PnL = 0 (we are opening new position, not closing any).
-   price = data.get(adjust_symbol, {}).get("bid") or data.get(adjust_symbol, {}).get("ask") or 0.0
-   log_trade(adjust_symbol, "Sell", 0.01, price, realized_pnl=0.0)
+   log_trade(new_adjust_symbol, "Sell", 0.01, new_adjust_price, realized_pnl=0.0)
    logging.info(f"New position state: {position_state}")
    return position_state  # adjustment made
  
@@ -255,8 +257,8 @@ def get_position_near_delta(get_iv_and_greeks_data, leg_to_adjust, target_delta)
 def convert_to_iron_butterfly(position_state, expiry=None):
    """If the short positions form a straddle, buy wings to form an iron butterfly."""
    # Determine current short strikes for call and put
-   call_strike = float(position_state["call"]["symbol"].split("-")[-2])  # e.g., symbol format "BTC-<expiry>-<strike>-C"
-   put_strike  = float(position_state["put"]["symbol"].split("-")[-2])
+   call_strike = float(position_state["call"]["symbol"].split("-")[-3])  # e.g., symbol format "BTC-<expiry>-<strike>-C-USDT"
+   put_strike  = float(position_state["put"]["symbol"].split("-")[-3])
    # Check if strikes are effectively equal (or very close) indicating a straddle
    if abs(call_strike - put_strike) > 1e-6:
        return False  # not a straddle yet

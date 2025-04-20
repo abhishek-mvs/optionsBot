@@ -7,3 +7,5 @@ __pycache__
 .env
 strategy.log
 trades_log.csv
+logs/
+trades_data/

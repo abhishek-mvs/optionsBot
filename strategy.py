@@ -1,6 +1,7 @@
 import time
 import requests
 import csv
+import argparse
 # from datetime import datetime, UTC
 from datetime import datetime, timezone
 from bybit_apis import DMABybit
@@ -8,12 +9,23 @@ import os
 from dotenv import load_dotenv
 import logging
 
-# Configure logging
+# Create logs directory if it doesn't exist
+logs_dir = 'logs'
+if not os.path.exists(logs_dir):
+    os.makedirs(logs_dir)
+
+# Create data directory if it doesn't exist
+data_dir = 'trades_data'
+if not os.path.exists(data_dir):
+    os.makedirs(data_dir)
+
+# Configure logging with timestamped filename in logs directory
+log_filename = os.path.join(logs_dir, f'strategy_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log')
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('strategy.log'),
+        logging.FileHandler(log_filename),
         logging.StreamHandler()  # This will also print to console
     ]
 )
@@ -25,7 +37,7 @@ API_SECRET = os.getenv('API_SECRET')
 bybit_client = DMABybit(API_KEY, API_SECRET, symbol="BTCUSDT", category="option")
 
 # Logging: Initialize CSV file with headers if not exists
-LOG_FILE = "trades_log.csv"
+LOG_FILE = os.path.join(data_dir, f'trades_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv')
 with open(LOG_FILE, mode='w', newline='') as f:
    writer = csv.writer(f)
    writer.writerow(["Timestamp", "Symbol", "Side", "Quantity", "Price", "Realized_PnL"])
@@ -314,31 +326,33 @@ def convert_to_iron_butterfly(position_state, expiry=None):
    return True
  
 def main():
-   print("Starting strategy execution")
-   logging.info("Starting strategy execution")
-   # Define which expiry to trade, e.g., use nearest expiry or a specified one
-   # For example, let's pick the closest weekly expiration by default:
-   expiry = "21APR25"  # None means all expiries; we could refine if needed.
-   # Step 1: Enter position on IV spike
-   position = enter_delta_neutral_position(expiry)
-   # Step 2: Rebalance periodically until conversion condition met or until expiry
-   adjustments_count = 0
-   while True:
-       time.sleep(15 * 60)  # wait 15 minutes
+    parser = argparse.ArgumentParser(description='Run options trading strategy')
+    parser.add_argument('--expiry', type=str, help='Expiry date in format DDMMMYY (e.g., 21APR25)', default="21APR25")
+    args = parser.parse_args()
+    
+    print("Starting strategy execution")
+    logging.info("Starting strategy execution")
+    # Use expiry from command line argument
+    expiry = args.expiry
+    # Step 1: Enter position on IV spike
+    position = enter_delta_neutral_position(expiry)
+    # Step 2: Rebalance periodically until conversion condition met or until expiry
+    adjustments_count = 0
+    while True:
+        time.sleep(15 * 60)  # wait 15 minutes
 
-       adjusted = rebalance_delta(position, expiry)
-       if adjusted:
-           position = adjusted
-           adjustments_count += 1
-       # Check if we should convert to iron butterfly
-       if adjustments_count > 0:  # after at least one adjustment, consider conversion
-           converted = convert_to_iron_butterfly(position, expiry)
-           if converted:
-               logging.info("Converted to Iron Butterfly structure. No further adjustments will be made.")
-               break
-       # Optionally, break out if near expiration or a certain time to avoid new adjustments
-       # (not implemented for brevity)
- 
+        adjusted = rebalance_delta(position, expiry)
+        if adjusted:
+            position = adjusted
+            adjustments_count += 1
+        # Check if we should convert to iron butterfly
+        if adjustments_count > 0:  # after at least one adjustment, consider conversion
+            converted = convert_to_iron_butterfly(position, expiry)
+            if converted:
+                logging.info("Converted to Iron Butterfly structure. No further adjustments will be made.")
+                break
+        # Optionally, break out if near expiration or a certain time to avoid new adjustments
+        # (not implemented for brevity)
  
 # def find_delta_neutral_legs(options_data, S, r, T, price_threshold):
 #    """Find delta-neutral legs and check against Black-Scholes price threshold."""
@@ -356,7 +370,6 @@ def main():
 #                best_put = (symbol, info)
 #    return best_call, best_put
  
- 
 # def enter_delta_neutral_position(expiry, S, r, T, price_threshold):
 #    """Monitor IV and enter delta-neutral short position if prices meet the threshold."""
 #    # Get market data and filter options
@@ -369,8 +382,6 @@ def main():
 #        return
    
    # Further code to place orders if both options are found and meet the criteria...
- 
- 
  
 if __name__ == "__main__":
     main()

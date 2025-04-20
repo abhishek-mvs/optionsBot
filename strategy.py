@@ -184,8 +184,8 @@ def enter_delta_neutral_position(expiry=None):
    log_trade(put_symbol,  "Sell", 1, entry_put_price,  realized_pnl=0.0)
    # Return a structure representing current position state
    position_state = {
-       "call": {"symbol": call_symbol, "delta": selected_call_info["delta"], "entry_price": entry_call_price, "contracts": 1},
-       "put":  {"symbol": put_symbol,  "delta": selected_put_info["delta"],  "entry_price": entry_put_price,  "contracts": 1}
+       "call": {"symbol": call_symbol, "delta": selected_call_info["delta"], "entry_price": entry_call_price, "contracts": 0.01},
+       "put":  {"symbol": put_symbol,  "delta": selected_put_info["delta"],  "entry_price": entry_put_price,  "contracts": 0.01}
    }
    return position_state
  
@@ -201,7 +201,7 @@ def rebalance_delta(position_state, expiry=None):
    logging.info(f"Current net delta: {net_delta:.3f} (call leg {call_delta:.3f}, put leg {put_delta:.3f})")
    if abs(net_delta) <= 0.1:
        logging.info("Portfolio delta is within ±0.1, no rebalance needed at this interval.")
-       return False  # no adjustment made
+       return None  # no adjustment made
    
    # Determine which leg has smaller delta contribution in magnitude
    # e.g., if net_delta is positive, call leg (short call) likely too small or put leg too small?
@@ -214,16 +214,44 @@ def rebalance_delta(position_state, expiry=None):
    # Decide adjustment: we will add one more short contract on the weaker side
    adjust_symbol = position_state[leg_to_adjust]["symbol"]
    # Place additional short order on that leg
-   order_id = place_order(side="Sell", symbol=adjust_symbol, qty=0.01)
-   log_trade(adjust_symbol, "Sell", 1, price, realized_pnl=0.0)
+   order_id = place_order(side="Buy", symbol=adjust_symbol, qty=0.01)
+   log_trade(adjust_symbol, "Buy", 0.01, price, realized_pnl=0.0)
    # Update position_state: increment contract count
-   position_state[leg_to_adjust]["contracts"] += 1
+   new_adjust_symbol = get_position_near_delta(data, leg_to_adjust, abs(put_delta) if leg_to_adjust == "call" else abs(call_delta))
+   order_id_new_symbol = place_order(side="Sell", symbol=new_adjust_symbol, qty=0.01)
+   position_state[leg_to_adjust] = {"symbol": new_adjust_symbol,  "delta": data.get(new_adjust_symbol, {}).get("delta", 0),  "entry_price": data.get(new_adjust_symbol, {}).get("bid") or data.get(new_adjust_symbol, {}).get("ask") or 0.0,  "contracts": 0.01}
    # Log the adjustment trade. Realized PnL = 0 (we are opening new position, not closing any).
    price = data.get(adjust_symbol, {}).get("bid") or data.get(adjust_symbol, {}).get("ask") or 0.0
-   log_trade(adjust_symbol, "Sell", 1, price, realized_pnl=0.0)
-   logging.info(f"Rebalanced delta by shorting 1 more contract of {adjust_symbol}. New {leg_to_adjust} contracts: {position_state[leg_to_adjust]['contracts']}.")
-   return True  # adjustment made
+   log_trade(adjust_symbol, "Sell", 0.01, price, realized_pnl=0.0)
+   logging.info(f"New position state: {position_state}")
+   return position_state  # adjustment made
  
+def get_position_near_delta(get_iv_and_greeks_data, leg_to_adjust, target_delta):
+   """Get the position near the delta"""
+   symbol_ends_with = "-C-USDT" if leg_to_adjust == "call" else "-P-USDT"
+   best_symbol = None
+   delta_diff_call = float("inf")
+   delta_diff_put = float("inf")
+   
+   for symbol, info in get_iv_and_greeks_data.items():
+        d = info["delta"]
+        if symbol.endswith(symbol_ends_with):
+            if symbol_ends_with == "-C-USDT":  # call option
+                # We want a call with delta ~ target_delta (d should be positive)
+                if d > 0:
+                    diff = abs(d - target_delta)
+                    if diff < delta_diff_call:
+                        delta_diff_call = diff
+                        best_symbol = symbol
+            else:  # put option
+                # We want a put with delta ~ -target_delta (d should be negative)
+                if d < 0:
+                    diff = abs(d + target_delta)  # Note the + sign here for puts
+                    if diff < delta_diff_put:
+                        delta_diff_put = diff
+                        best_symbol = symbol
+   return best_symbol
+   
 def convert_to_iron_butterfly(position_state, expiry=None):
    """If the short positions form a straddle, buy wings to form an iron butterfly."""
    # Determine current short strikes for call and put
@@ -284,7 +312,7 @@ def main():
    logging.info("Starting strategy execution")
    # Define which expiry to trade, e.g., use nearest expiry or a specified one
    # For example, let's pick the closest weekly expiration by default:
-   expiry = "20APR25"  # None means all expiries; we could refine if needed.
+   expiry = "21APR25"  # None means all expiries; we could refine if needed.
    # Step 1: Enter position on IV spike
    position = enter_delta_neutral_position(expiry)
    # Step 2: Rebalance periodically until conversion condition met or until expiry
@@ -294,6 +322,7 @@ def main():
        logging.info("Rebalancing delta")
        adjusted = rebalance_delta(position, expiry)
        if adjusted:
+           position = adjusted
            adjustments_count += 1
        # Check if we should convert to iron butterfly
        if adjustments_count > 0:  # after at least one adjustment, consider conversion

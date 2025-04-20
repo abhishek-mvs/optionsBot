@@ -118,6 +118,14 @@ class DMABybit:
         }
         return self._prepare_request(endpoint, method='POST', body=body)
 
+    def set_margin_mode(self, margin_mode):
+        endpoint = "/v5/account/set-margin-mode"
+        body = {
+            "category": self.category,
+            "setMarginMode": margin_mode
+        }
+        return self._prepare_request(endpoint, method='POST', body=body)
+
     def switch_isolated(self, trade_mode, leverage):
         """switch_isolated for the symbol"""
         endpoint = "/v5/position/switch-isolated"
@@ -168,7 +176,7 @@ class DMABybit:
         }
         return self._prepare_request(endpoint, params=params)
 
-    def get_open_positions(self, base_coin=None):
+    def get_open_positions(self, ):
         """Get open positions for the symbol"""
         endpoint = "/v5/position/list"
         params = {
@@ -201,12 +209,28 @@ class DMABybit:
         """Get trades for a specific order"""
         endpoint = "/v5/execution/list"
         params = {
-            'symbol': self.symbol,
+            # 'symbol': self.symbol,
             'orderLinkId': order_link_id,
             'category': self.category
         }
         return self._prepare_request(endpoint, params=params)
 
+    def get_position_closed_pnl(self):
+        """Get position closed PNL"""
+        endpoint = "/v5/position/closed-pnl"
+        params = {
+            'category': self.category
+        }
+        return self._prepare_request(endpoint, params=params)
+    
+    def post_move_position(self):
+        """Get move position"""
+        endpoint = "/v5/position/move-positions"
+        body = {
+            'category': self.category,
+        }
+        return self._prepare_request(endpoint, method='POST', body=body)
+    
     def generate_socket_signature(self):
         """Funds Transfer"""
         endpoint = "/dma/api/v1/socket/signature"
@@ -243,7 +267,8 @@ class DMABybit:
     def get_balance(self):
         endpoint = "/v5/account/wallet-balance"
         params = {
-            
+            "category": self.category,
+            "accountType": "UNIFIED"
         }
         return self._prepare_request(endpoint, params=params)
 

@@ -52,8 +52,82 @@ def test_option_apis():
         # 4. Test get_trades for options
         f.write("4. Testing get_trades for options:\n")
         f.write("   Note: This test requires a valid order_link_id\n\n")
-    
+
     print(f"All responses have been saved to {output_file}")
 
+def test_transfer_funds():
+    # Load environment variables
+    load_dotenv()
+    API_KEY = os.getenv('API_KEY')
+    API_SECRET = os.getenv('API_SECRET')
+    bybit = DMABybit(API_KEY, API_SECRET, symbol="BTCUSDT", category="option")
+    bybit.transfer_funds(amount=50, direction="IN")
+
+def test_get_balance():
+    # Load environment variables
+    load_dotenv()
+    API_KEY = os.getenv('API_KEY')
+    API_SECRET = os.getenv('API_SECRET')    
+    bybit = DMABybit(API_KEY, API_SECRET, symbol="BTCUSDT", category="option")
+    balance = bybit.get_balance()
+    print(balance)
+
+
+def test_set_margin_mode():
+    # Load environment variables
+    load_dotenv()
+    API_KEY = os.getenv('API_KEY')
+    API_SECRET = os.getenv('API_SECRET')    
+    bybit = DMABybit(API_KEY, API_SECRET, symbol="BTCUSDT", category="option")
+    print(bybit.set_margin_mode("PORTFOLIO_MARGIN"))
+
+def test_place_order():
+    # Load environment variables
+    load_dotenv()
+    API_KEY = os.getenv('API_KEY')
+    API_SECRET = os.getenv('API_SECRET')    
+    bybit = DMABybit(API_KEY, API_SECRET, symbol="BTCUSDT", category="option")
+    body = {
+        "symbol": "BTC-21APR25-84500-C-USDT",
+        "side": "SELL",
+        "qty": str(0.01),
+        "orderType": "Market",
+        "timeInForce": "IOC"
+    }
+    print(bybit.place_order(body))
+
+def test_get_trade_history():
+    # Load environment variables
+    load_dotenv()
+    API_KEY = os.getenv('API_KEY')
+    API_SECRET = os.getenv('API_SECRET')    
+    bybit = DMABybit(API_KEY, API_SECRET, symbol="BTCUSDT", category="option")
+    print(bybit.get_trades(order_link_id="f1b91155-64ff-4f3d-8a21-7c118a003791"))
+
+
+def test_move_position():
+    # Load environment variables
+    load_dotenv()
+    API_KEY = os.getenv('API_KEY')
+    API_SECRET = os.getenv('API_SECRET')    
+    bybit = DMABybit(API_KEY, API_SECRET, symbol="BTCUSDT", category="option")
+    print("post_move_position", bybit.post_move_position())
+
+def test_get_position_closed_pnl():
+    # Load environment variables
+    load_dotenv()
+    API_KEY = os.getenv('API_KEY')
+    API_SECRET = os.getenv('API_SECRET')    
+    bybit = DMABybit(API_KEY, API_SECRET, symbol="BTCUSDT", category="option")
+    print("get_position_closed_pnl", bybit.get_position_closed_pnl())
+
 if __name__ == "__main__":
-    test_option_apis() 
+    # test_option_apis() 
+    # test_transfer_funds()
+    # test_get_balance()
+    # test_set_margin_mode()
+    # test_place_order()
+    # test_get_trade_history()
+    test_get_position_closed_pnl()
+    test_move_position()
+    

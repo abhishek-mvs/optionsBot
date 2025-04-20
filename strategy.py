@@ -225,7 +225,7 @@ def rebalance_delta(position_state, expiry=None):
    position_state[leg_to_adjust] = {"symbol": new_adjust_symbol,  "delta": data.get(new_adjust_symbol, {}).get("delta", 0),  "entry_price": new_adjust_price,  "contracts": 1}
    # Log the adjustment trade. Realized PnL = 0 (we are opening new position, not closing any).
    log_trade(new_adjust_symbol, "Sell", 0.01, new_adjust_price, realized_pnl=0.0)
-   logging.info(f"New position state: {position_state}")
+   logging.info(f"New position state after rebalancing: {position_state}")
    return position_state  # adjustment made
  
 def get_position_near_delta(get_iv_and_greeks_data, leg_to_adjust, target_delta):
@@ -256,37 +256,41 @@ def get_position_near_delta(get_iv_and_greeks_data, leg_to_adjust, target_delta)
    
 def convert_to_iron_butterfly(position_state, expiry=None):
    """If the short positions form a straddle, buy wings to form an iron butterfly."""
+   logging.info(f"Converting to iron butterfly: {position_state}")
    # Determine current short strikes for call and put
    call_strike = float(position_state["call"]["symbol"].split("-")[-3])  # e.g., symbol format "BTC-<expiry>-<strike>-C-USDT"
    put_strike  = float(position_state["put"]["symbol"].split("-")[-3])
+   print(f"call_strike: {call_strike}, put_strike: {put_strike}")
    # Check if strikes are effectively equal (or very close) indicating a straddle
    if abs(call_strike - put_strike) > 1e-6:
        return False  # not a straddle yet
    center_strike = call_strike  # (which equals put_strike)
-   # Choose wing strikes, e.g., 10% away on each side
-   underlying_price = get_iv_and_greeks(expiry).get(position_state["call"]["symbol"], {}).get("underlying", None)
-   if not underlying_price:
-       underlying_price = center_strike  # fallback
-   wing_offset = 0.1 * underlying_price  # 10% of underlying as wing width (rough heuristic)
-   upper_strike = center_strike + wing_offset
-   lower_strike = center_strike - wing_offset
-   # Find the closest available option strikes to these target wing strikes
-   data = get_iv_and_greeks(expiry)
+   
+   # Initialize wing options
    chosen_call_wing = None
    chosen_put_wing = None
+   
+   # Get market data for available options
+   data = get_iv_and_greeks(expiry)
+   
+   # Find the closest call option above center strike and put option below center strike
    min_diff_call = float("inf")
    min_diff_put = float("inf")
+   
    for sym, info in data.items():
-       if sym.endswith("-C"):
-           strike = float(sym.split("-")[-2])
-           if strike >= center_strike and abs(strike - upper_strike) < min_diff_call:
-               min_diff_call = abs(strike - upper_strike)
+       if sym.endswith("-C-USDT"):
+           strike = float(sym.split("-")[-3])
+           if strike > center_strike and abs(strike - center_strike) < min_diff_call:
+               min_diff_call = abs(strike - center_strike)
                chosen_call_wing = sym
-       elif sym.endswith("-P"):
-           strike = float(sym.split("-")[-2])
-           if strike <= center_strike and abs(strike - lower_strike) < min_diff_put:
-               min_diff_put = abs(strike - lower_strike)
+       elif sym.endswith("-P-USDT"):
+           strike = float(sym.split("-")[-3])
+           if strike < center_strike and abs(strike - center_strike) < min_diff_put:
+               min_diff_put = abs(strike - center_strike)
                chosen_put_wing = sym
+   
+   print(f"center_strike: {center_strike}")
+   print(f"chosen_call_wing: {chosen_call_wing}, chosen_put_wing: {chosen_put_wing}")
    if not chosen_call_wing or not chosen_put_wing:
        logging.warning("Could not find suitable wing strikes for iron butterfly.")
        return False
@@ -321,7 +325,7 @@ def main():
    adjustments_count = 0
    while True:
        time.sleep(15 * 60)  # wait 15 minutes
-       logging.info("Rebalancing delta")
+
        adjusted = rebalance_delta(position, expiry)
        if adjusted:
            position = adjusted

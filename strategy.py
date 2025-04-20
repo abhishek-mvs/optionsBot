@@ -331,9 +331,10 @@ def main():
     args = parser.parse_args()
     
     print("Starting strategy execution")
-    logging.info("Starting strategy execution")
+    
     # Use expiry from command line argument
     expiry = args.expiry
+    logging.info("Starting strategy execution for expiry: %s", args.expiry)
     # Step 1: Enter position on IV spike
     position = enter_delta_neutral_position(expiry)
     # Step 2: Rebalance periodically until conversion condition met or until expiry

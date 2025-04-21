@@ -9,6 +9,10 @@ import os
 from dotenv import load_dotenv
 import logging
 
+# Initialize global variables
+total_realized_pnl = 0.0
+intital_margin_prices = 0.0
+
 # Create logs directory if it doesn't exist
 logs_dir = 'logs'
 if not os.path.exists(logs_dir):
@@ -192,19 +196,88 @@ def enter_delta_neutral_position(expiry=None):
    # Assuming we have price info from selected_call_info (bid/ask). Use bid for sell price as conservative.
    entry_call_price = selected_call_info["bid"] or selected_call_info["ask"]  # if bid is 0 (no bid), use ask as proxy
    entry_put_price  = selected_put_info["bid"] or selected_put_info["ask"]
-   log_trade(call_symbol, "Sell", 1, entry_call_price, realized_pnl=0.0)
-   log_trade(put_symbol,  "Sell", 1, entry_put_price,  realized_pnl=0.0)
+   log_trade(call_symbol, "Sell", 0.01, entry_call_price, realized_pnl=0.0)
+   log_trade(put_symbol,  "Sell", 0.01, entry_put_price,  realized_pnl=0.0)
+   global intital_margin_prices
+   intital_margin_prices = entry_call_price + entry_put_price
    # Return a structure representing current position state
    position_state = {
-       "call": {"symbol": call_symbol, "delta": selected_call_info["delta"], "entry_price": entry_call_price, "contracts": 1},
-       "put":  {"symbol": put_symbol,  "delta": selected_put_info["delta"],  "entry_price": entry_put_price,  "contracts": 1}
+       "call": {"symbol": call_symbol, "delta": selected_call_info["delta"], "entry_price": entry_call_price, "contracts": 1, "qty": 0.01},
+       "put":  {"symbol": put_symbol,  "delta": selected_put_info["delta"],  "entry_price": entry_put_price,  "contracts": 1, "qty": 0.01}
    }
    return position_state
- 
+
+def calculate_current_pnl(position_state, get_iv_and_greeks_data, expiry=None):
+    """Calculate current PnL for the position including both realized and unrealized components."""
+    unrealized_pnl = 0.0
+    for leg, info in position_state.items():
+        symbol = info["symbol"]
+        entry_price = info["entry_price"]
+        contracts = info["contracts"]
+        current_price = get_iv_and_greeks_data.get(symbol, {}).get("bid") or get_iv_and_greeks_data.get(symbol, {}).get("ask") or 0.0
+        # For short positions, PnL = entry_price - current_price
+        unrealized_pnl += (entry_price - current_price) * contracts
+    
+    # Total PnL = realized PnL + unrealized PnL
+    total_pnl = total_realized_pnl + unrealized_pnl
+    logging.info(f"Total PnL: {total_pnl:.4f} (Realized: {total_realized_pnl:.4f}, Unrealized: {unrealized_pnl:.4f})")
+    return total_pnl
+
+def check_pnl_and_exit(position_state, get_iv_and_greeks_data, expiry=None):
+    """Check PnL and exit if it's too low."""
+    current_pnl = calculate_current_pnl(position_state, get_iv_and_greeks_data, expiry)
+    logging.info(f"Current PnL: {current_pnl} and intital_margin_prices: {intital_margin_prices}")
+    # Get current market data
+    # Check if PnL is above initial margin prices plus 10% (profit target)
+    global total_realized_pnl
+    if current_pnl >= intital_margin_prices * 0.1:
+        logging.info(f"Profit target reached! Current PnL: {current_pnl:.4f}, which is above initial margin plus 10%: {(intital_margin_prices * 0.1):.4f}")
+        # Close positions (buy back what we sold)
+        for leg, info in position_state.items():
+            symbol = info["symbol"]
+            qty = info["qty"]
+            contracts = info["contracts"]
+            current_price = get_iv_and_greeks_data.get(symbol, {}).get("ask") or get_iv_and_greeks_data.get(symbol, {}).get("bid") or 0.0
+            entry_price = info["entry_price"]
+            realized_pnl = (entry_price - current_price) * contracts
+           
+            total_realized_pnl += realized_pnl
+            order_id = place_order(side="Buy", symbol=symbol, qty=qty)
+            log_trade(symbol, "Buy", qty, current_price, realized_pnl=realized_pnl)
+            logging.info(f"Closed {leg} position with realized PnL: {realized_pnl:.4f}")
+        logging.info(f"Exited position with total realized PnL: {total_realized_pnl:.4f}")
+        return True  # Signal that we've exited the position
+    
+    # Check if PnL is below initial margin prices minus 10% (stop loss)
+    if current_pnl <= intital_margin_prices * -0.1:
+        logging.info(f"Stop loss triggered! Current PnL: {current_pnl:.4f}, which is below initial margin minus 10%: {intital_margin_prices * -0.1:.4f}")
+        # Close positions (buy back what we sold)
+        for leg, info in position_state.items():
+            symbol = info["symbol"]
+            qty = info["qty"]
+            contracts = info["contracts"]
+            current_price = get_iv_and_greeks_data.get(symbol, {}).get("ask") or get_iv_and_greeks_data.get(symbol, {}).get("bid") or 0.0
+            entry_price = info["entry_price"]
+            realized_pnl = (entry_price - current_price) * contracts
+            
+            total_realized_pnl += realized_pnl
+            order_id = place_order(side="Buy", symbol=symbol, qty=qty)
+            log_trade(symbol, "Buy", qty, current_price, realized_pnl=realized_pnl)
+            logging.info(f"Closed {leg} position with realized PnL: {realized_pnl:.4f}")
+        logging.info(f"Exited position with total realized PnL: {total_realized_pnl:.4f}")
+        return True  # Signal that we've exited the position
+    
+    # If we're here, we're within our PnL thresholds
+    logging.info(f"Current PnL: {current_pnl:.4f} is within acceptable range of initial margin ±10%: {intital_margin_prices:.4f} ±{intital_margin_prices * 0.1:.4f}")
+    return False  # Signal that we're still in the position
+
 def rebalance_delta(position_state, expiry=None):
    """Check portfolio delta and rebalance if outside ±0.1 by adjusting the appropriate leg."""
    logging.info(f"Rebalancing delta: {position_state}")
    data = get_iv_and_greeks(expiry)
+   exit_signal = check_pnl_and_exit(position_state, data, expiry)
+   if exit_signal:
+       return {}
    # Calculate current net delta of the portfolio
    call_sym = position_state["call"]["symbol"]
    put_sym  = position_state["put"]["symbol"]
@@ -217,24 +290,26 @@ def rebalance_delta(position_state, expiry=None):
        return None  # no adjustment made
    
    # Determine which leg has smaller delta contribution in magnitude
-   # e.g., if net_delta is positive, call leg (short call) likely too small or put leg too small?
-   # Actually, net_delta > 0 means overall behaves like long (so put leg's positive delta dominates or call delta is too low)
-   # We interpret "leg that contributes less" as the one with smaller absolute delta.
    if abs(call_delta) < abs(put_delta):
        leg_to_adjust = "call"
    else:
        leg_to_adjust = "put"
    # Decide adjustment: we will add one more short contract on the weaker side
    adjust_symbol = position_state[leg_to_adjust]["symbol"]
-   # Place additional short order on that leg
+   # Close the existing position, we have to buy since we are short
    price = data.get(adjust_symbol, {}).get("bid") or data.get(adjust_symbol, {}).get("ask") or 0.0
+   entry_price = position_state[leg_to_adjust]["entry_price"]
+   contracts = position_state[leg_to_adjust]["contracts"]
+   realized_pnl = (entry_price - price) * contracts  # Since we're short, PnL = entry_price - current_price
+   global total_realized_pnl
+   total_realized_pnl += realized_pnl
    order_id = place_order(side="Buy", symbol=adjust_symbol, qty=0.01)
-   log_trade(adjust_symbol, "Buy", 0.01, price, realized_pnl=0.0)
-   # Update position_state: increment contract count
+   log_trade(adjust_symbol, "Buy", 0.01, price, realized_pnl=realized_pnl)
+   
    new_adjust_symbol = get_position_near_delta(data, leg_to_adjust, abs(put_delta) if leg_to_adjust == "call" else abs(call_delta))
    order_id_new_symbol = place_order(side="Sell", symbol=new_adjust_symbol, qty=0.01)
    new_adjust_price = data.get(new_adjust_symbol, {}).get("bid") or data.get(new_adjust_symbol, {}).get("ask") or 0.0
-   position_state[leg_to_adjust] = {"symbol": new_adjust_symbol,  "delta": data.get(new_adjust_symbol, {}).get("delta", 0),  "entry_price": new_adjust_price,  "contracts": 1}
+   position_state[leg_to_adjust] = {"symbol": new_adjust_symbol,  "delta": data.get(new_adjust_symbol, {}).get("delta", 0),  "entry_price": new_adjust_price,  "contracts": 1, "qty": 0.01}
    # Log the adjustment trade. Realized PnL = 0 (we are opening new position, not closing any).
    log_trade(new_adjust_symbol, "Sell", 0.01, new_adjust_price, realized_pnl=0.0)
    logging.info(f"New position state after rebalancing: {position_state}")
@@ -343,9 +418,13 @@ def main():
         time.sleep(15 * 60)  # wait 15 minutes
 
         adjusted = rebalance_delta(position, expiry)
-        if adjusted:
-            position = adjusted
-            adjustments_count += 1
+        if adjusted is not None:
+            if adjusted == {}:
+                logging.info("All positions have been exited. Stopping strategy execution.")
+                break
+            else:
+                position = adjusted
+                adjustments_count += 1
         # Check if we should convert to iron butterfly
         if adjustments_count > 0:  # after at least one adjustment, consider conversion
             converted = convert_to_iron_butterfly(position, expiry)

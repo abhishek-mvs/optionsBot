@@ -9,6 +9,8 @@ import os
 from dotenv import load_dotenv
 import logging
 
+from helpers import get_initial_margin_of_position_state, get_pnl_of_position_state, get_pnl_of_sqaured_position
+
 # Initialize global variables
 total_realized_pnl = 0.0
 intital_margin_prices = 0.0
@@ -44,15 +46,15 @@ bybit_client = DMABybit(API_KEY, API_SECRET, symbol="BTCUSDT", category="option"
 LOG_FILE = os.path.join(data_dir, f'trades_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv')
 with open(LOG_FILE, mode='w', newline='') as f:
    writer = csv.writer(f)
-   writer.writerow(["Timestamp", "Symbol", "Side", "Quantity", "Price", "Realized_PnL"])
+   writer.writerow(["Timestamp", "Order_Link_Id", "Symbol", "Side", "Quantity", "Price", "Realized_PnL"])
  
-def log_trade(symbol, side, qty, price, realized_pnl):
+def log_trade(order_link_id, symbol, side, qty, price, realized_pnl):
    """Log the trade details and P&L to the CSV file."""
    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
    with open(LOG_FILE, mode='a', newline='') as f:
        writer = csv.writer(f)
-       writer.writerow([timestamp, symbol, side, qty, price, f"{realized_pnl:.4f}"])
-   logging.info(f"Trade logged: {symbol} {side} {qty} @ {price} (PnL: {realized_pnl:.4f})")
+       writer.writerow([timestamp, order_link_id, symbol, side, qty, price, f"{realized_pnl:.4f}"])
+   logging.info(f"Trade logged: {order_link_id} {symbol} {side} {qty} @ {price} (PnL: {realized_pnl:.4f})")
  
 # Helper: Fetch current option market data (tickers) for BTC
 def get_iv_and_greeks(expiry=None):
@@ -111,7 +113,7 @@ def find_delta_neutral_legs(options_data):
 # Helper: Place an order (using requests for illustration; normally use authenticated request)
 def place_order(side, symbol, qty, order_type="Market", price=None):
    logging.info(f"Placing order: {symbol} {side} {qty} {order_type} {price}")
-   return 1
+#    return 1
    """Place an order on Bybit for the given option. side: 'Buy' or 'Sell'. Returns order ID or raises on error."""
    body = {
        "symbol": symbol,
@@ -127,7 +129,7 @@ def place_order(side, symbol, qty, order_type="Market", price=None):
    result = bybit_client.place_order(body)
    if result.get("retCode") != 0:
        raise Exception(f"Order placement failed: {result.get('retMsg')}")
-   order_id = result["result"]["orderId"]
+   order_id = result["result"]["orderLinkId"]
    return order_id
  
 # Strategy functions
@@ -196,28 +198,21 @@ def enter_delta_neutral_position(expiry=None):
    # Assuming we have price info from selected_call_info (bid/ask). Use bid for sell price as conservative.
    entry_call_price = selected_call_info["bid"] or selected_call_info["ask"]  # if bid is 0 (no bid), use ask as proxy
    entry_put_price  = selected_put_info["bid"] or selected_put_info["ask"]
-   log_trade(call_symbol, "Sell", 0.01, entry_call_price, realized_pnl=0.0)
-   log_trade(put_symbol,  "Sell", 0.01, entry_put_price,  realized_pnl=0.0)
-   global intital_margin_prices
-   intital_margin_prices = entry_call_price + entry_put_price
+   log_trade(order_id_call, call_symbol, "Sell", 0.01, entry_call_price, realized_pnl=0.0)
+   log_trade(order_id_put,  put_symbol,  "Sell", 0.01, entry_put_price,  realized_pnl=0.0)
    # Return a structure representing current position state
    position_state = {
-       "call": {"symbol": call_symbol, "delta": selected_call_info["delta"], "entry_price": entry_call_price, "contracts": 1, "qty": 0.01},
-       "put":  {"symbol": put_symbol,  "delta": selected_put_info["delta"],  "entry_price": entry_put_price,  "contracts": 1, "qty": 0.01}
+       "call": {"order_id": order_id_call, "symbol": call_symbol, "delta": selected_call_info["delta"], "entry_price": entry_call_price, "contracts": 1, "qty": 0.01},
+       "put":  {"order_id": order_id_put,  "symbol": put_symbol,  "delta": selected_put_info["delta"],  "entry_price": entry_put_price,  "contracts": 1, "qty": 0.01}
    }
+   global intital_margin_prices
+   intital_margin_prices = get_initial_margin_of_position_state(position_state)
+   print(f"intital_margin_prices: {intital_margin_prices}")
    return position_state
 
 def calculate_current_pnl(position_state, get_iv_and_greeks_data, expiry=None):
     """Calculate current PnL for the position including both realized and unrealized components."""
-    unrealized_pnl = 0.0
-    for leg, info in position_state.items():
-        symbol = info["symbol"]
-        entry_price = info["entry_price"]
-        contracts = info["contracts"]
-        current_price = get_iv_and_greeks_data.get(symbol, {}).get("bid") or get_iv_and_greeks_data.get(symbol, {}).get("ask") or 0.0
-        # For short positions, PnL = entry_price - current_price
-        unrealized_pnl += (entry_price - current_price) * contracts
-    
+    unrealized_pnl = get_pnl_of_position_state(position_state)  
     # Total PnL = realized PnL + unrealized PnL
     total_pnl = total_realized_pnl + unrealized_pnl
     logging.info(f"Total PnL: {total_pnl:.4f} (Realized: {total_realized_pnl:.4f}, Unrealized: {unrealized_pnl:.4f})")
@@ -241,10 +236,11 @@ def check_pnl_and_exit(position_state, get_iv_and_greeks_data, expiry=None):
             entry_price = info["entry_price"]
             realized_pnl = (entry_price - current_price) * contracts
            
-            total_realized_pnl += realized_pnl
             order_id = place_order(side="Buy", symbol=symbol, qty=qty)
-            log_trade(symbol, "Buy", qty, current_price, realized_pnl=realized_pnl)
-            logging.info(f"Closed {leg} position with realized PnL: {realized_pnl:.4f}")
+            realized_pnl_squared_position = get_pnl_of_sqaured_position(info["order_id"], order_id)
+            total_realized_pnl += realized_pnl_squared_position
+            log_trade(info["order_id"], symbol, "Buy", qty, current_price, realized_pnl=realized_pnl_squared_position)    
+            logging.info(f"Closed {leg} position with realized PnL: {realized_pnl_squared_position:.4f}")
         logging.info(f"Exited position with total realized PnL: {total_realized_pnl:.4f}")
         return True  # Signal that we've exited the position
     
@@ -260,10 +256,11 @@ def check_pnl_and_exit(position_state, get_iv_and_greeks_data, expiry=None):
             entry_price = info["entry_price"]
             realized_pnl = (entry_price - current_price) * contracts
             
-            total_realized_pnl += realized_pnl
             order_id = place_order(side="Buy", symbol=symbol, qty=qty)
-            log_trade(symbol, "Buy", qty, current_price, realized_pnl=realized_pnl)
-            logging.info(f"Closed {leg} position with realized PnL: {realized_pnl:.4f}")
+            realized_pnl_squared_position = get_pnl_of_sqaured_position(info["order_id"], order_id)
+            total_realized_pnl += realized_pnl_squared_position
+            log_trade(info["order_id"], symbol, "Buy", qty, current_price, realized_pnl=realized_pnl_squared_position)
+            logging.info(f"Closed {leg} position with realized PnL: {realized_pnl_squared_position:.4f}")
         logging.info(f"Exited position with total realized PnL: {total_realized_pnl:.4f}")
         return True  # Signal that we've exited the position
     
@@ -298,20 +295,20 @@ def rebalance_delta(position_state, expiry=None):
    adjust_symbol = position_state[leg_to_adjust]["symbol"]
    # Close the existing position, we have to buy since we are short
    price = data.get(adjust_symbol, {}).get("bid") or data.get(adjust_symbol, {}).get("ask") or 0.0
-   entry_price = position_state[leg_to_adjust]["entry_price"]
-   contracts = position_state[leg_to_adjust]["contracts"]
-   realized_pnl = (entry_price - price) * contracts  # Since we're short, PnL = entry_price - current_price
-   global total_realized_pnl
-   total_realized_pnl += realized_pnl
+   
    order_id = place_order(side="Buy", symbol=adjust_symbol, qty=0.01)
-   log_trade(adjust_symbol, "Buy", 0.01, price, realized_pnl=realized_pnl)
+   
+   global total_realized_pnl
+   realized_pnl_squared_position = get_pnl_of_sqaured_position(position_state[leg_to_adjust]["order_id"], order_id)
+   total_realized_pnl += realized_pnl_squared_position
+   log_trade(position_state[leg_to_adjust]["order_id"], adjust_symbol, "Buy", 0.01, price, realized_pnl=realized_pnl_squared_position)
    
    new_adjust_symbol = get_position_near_delta(data, leg_to_adjust, abs(put_delta) if leg_to_adjust == "call" else abs(call_delta))
    order_id_new_symbol = place_order(side="Sell", symbol=new_adjust_symbol, qty=0.01)
    new_adjust_price = data.get(new_adjust_symbol, {}).get("bid") or data.get(new_adjust_symbol, {}).get("ask") or 0.0
-   position_state[leg_to_adjust] = {"symbol": new_adjust_symbol,  "delta": data.get(new_adjust_symbol, {}).get("delta", 0),  "entry_price": new_adjust_price,  "contracts": 1, "qty": 0.01}
+   position_state[leg_to_adjust] = {"order_id": order_id_new_symbol, "symbol": new_adjust_symbol,  "delta": data.get(new_adjust_symbol, {}).get("delta", 0),  "entry_price": new_adjust_price,  "contracts": 1, "qty": 0.01}
    # Log the adjustment trade. Realized PnL = 0 (we are opening new position, not closing any).
-   log_trade(new_adjust_symbol, "Sell", 0.01, new_adjust_price, realized_pnl=0.0)
+   log_trade(order_id_new_symbol, new_adjust_symbol, "Sell", 0.01, new_adjust_price, realized_pnl=0.0)
    logging.info(f"New position state after rebalancing: {position_state}")
    return position_state  # adjustment made
  
@@ -395,8 +392,8 @@ def convert_to_iron_butterfly(position_state, expiry=None):
    net_credit_after_wings = total_short_premium - total_wing_cost
    logging.info(f"Added wings: Bought 1x {chosen_call_wing} and 1x {chosen_put_wing}. Total wing cost ~{total_wing_cost:.2f}, net credit remaining ~{net_credit_after_wings:.2f}.")
    # Log the wing purchase trades (realized PnL negative here as cost, but we treat it as part of strategy P&L)
-   log_trade(chosen_call_wing, "Buy", 1, wing_call_price, realized_pnl=0.0)
-   log_trade(chosen_put_wing,  "Buy", 1, wing_put_price,  realized_pnl=0.0)
+   log_trade(order_id1, chosen_call_wing, "Buy", 1, wing_call_price, realized_pnl=0.0)
+   log_trade(order_id2, chosen_put_wing,  "Buy", 1, wing_put_price,  realized_pnl=0.0)
    # Once wings are added, the position is now an iron butterfly with defined risk.
    return True
  
@@ -431,38 +428,8 @@ def main():
             if converted:
                 logging.info("Converted to Iron Butterfly structure. No further adjustments will be made.")
                 break
-        # Optionally, break out if near expiration or a certain time to avoid new adjustments
-        # (not implemented for brevity)
- 
-# def find_delta_neutral_legs(options_data, S, r, T, price_threshold):
-#    """Find delta-neutral legs and check against Black-Scholes price threshold."""
-#    best_call, best_put = None, None
-#    for symbol, info in options_data.items():
-#        strike = float(symbol.split('-')[-2].replace('C', '').replace('P', '').replace('USDT', ''))
-#        sigma = info['iv']
-#        if symbol.endswith('-C'):
-#            price = black_scholes_call(S, strike, T, r, sigma)
-#            if price >= price_threshold and (best_call is None or abs(info['delta'] - 0.1) < abs(best_call[1]['delta'] - 0.1)):
-#                best_call = (symbol, info)
-#        elif symbol.endswith('-P'):
-#            price = black_scholes_put(S, strike, T, r, sigma)
-#            if price >= price_threshold and (best_put is None or abs(info['delta'] + 0.1) < abs(best_put[1]['delta'] + 0.1)):
-#                best_put = (symbol, info)
-#    return best_call, best_put
- 
-# def enter_delta_neutral_position(expiry, S, r, T, price_threshold):
-#    """Monitor IV and enter delta-neutral short position if prices meet the threshold."""
-#    # Get market data and filter options
-#    options_data = get_iv_and_greeks(expiry)
-#    # Find the appropriate call and put options
-#    selected_call, selected_put = find_delta_neutral_legs(options_data, S, r, T, price_threshold)
-   
-#    if selected_call is None or selected_put is None:
-#        print("No suitable options meeting the price threshold were found.")
-#        return
-   
-   # Further code to place orders if both options are found and meet the criteria...
- 
+       
+
 if __name__ == "__main__":
     main()
  

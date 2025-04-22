@@ -176,13 +176,16 @@ class DMABybit:
         }
         return self._prepare_request(endpoint, params=params)
 
-    def get_open_positions(self, ):
+    def get_open_positions(self, symbol=None):
         """Get open positions for the symbol"""
         endpoint = "/v5/position/list"
         params = {
             # 'baseCoin': self.symbol,
+            # 'symbol': self.symbol,
             'category': self.category
         }
+        if symbol:
+            params['symbol'] = symbol
         return self._prepare_request(endpoint, params=params)
 
     def add_margin(self, margin_amount=1):
@@ -210,17 +213,14 @@ class DMABybit:
         endpoint = "/v5/execution/list"
         params = {
             # 'symbol': self.symbol,
-            'orderLinkId': order_link_id,
+            # 'orderLinkId': order_link_id,
             'category': self.category
         }
         return self._prepare_request(endpoint, params=params)
 
-    def get_position_closed_pnl(self):
+    def get_position_closed_pnl(self, params):
         """Get position closed PNL"""
         endpoint = "/v5/position/closed-pnl"
-        params = {
-            'category': self.category
-        }
         return self._prepare_request(endpoint, params=params)
     
     def post_move_position(self):

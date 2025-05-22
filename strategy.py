@@ -40,7 +40,7 @@ logging.basicConfig(
 load_dotenv()
 API_KEY = os.getenv('API_KEY')
 API_SECRET = os.getenv('API_SECRET')
-bybit_client = DMABybit(API_KEY, API_SECRET, symbol="BTCUSDT", category="option")
+bybit_client = DMABybit(API_KEY, API_SECRET, symbol="ETHUSDT", category="option")
 
 # Logging: Initialize CSV file with headers if not exists
 LOG_FILE = os.path.join(data_dir, f'trades_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv')
@@ -56,10 +56,10 @@ def log_trade(order_link_id, symbol, side, qty, price, realized_pnl):
        writer.writerow([timestamp, order_link_id, symbol, side, qty, price, f"{realized_pnl:.4f}"])
    logging.info(f"Trade logged: {order_link_id} {symbol} {side} {qty} @ {price} (PnL: {realized_pnl:.4f})")
  
-# Helper: Fetch current option market data (tickers) for BTC
+# Helper: Fetch current option market data (tickers) for Symbol
 def get_iv_and_greeks(expiry=None):
-   """Fetch all BTC option tickers and return parsed data (IV, delta, etc.)"""
-   data = bybit_client.get_tickers(category="option", base_coin="BTC", exp_date=expiry)
+   """Fetch all Symbol option tickers and return parsed data (IV, delta, etc.)"""
+   data = bybit_client.get_tickers(category="option", base_coin="ETH", exp_date=expiry)
    if data.get("retCode") != 0:
        raise Exception(f"Failed to get tickers: {data.get('retMsg')}")
    # Parse the returned list of option tickers
@@ -91,8 +91,8 @@ def find_delta_neutral_legs(options_data):
    delta_diff_put = float("inf")
    for symbol, info in options_data.items():
        d = info["delta"]
-       # Ensure we pick only BTCUSDT options (Bybit might list BTCUSD etc; focusing on USDT-settled if needed)
-       # For simplicity, assume all here are BTC options for the chosen expiry.
+       # Ensure we pick only SYMBOLUSDT options (Bybit might list SYMBOLUSD etc; focusing on USDT-settled if needed)
+       # For simplicity, assume all here are Symbol options for the chosen expiry.
        # Identify calls vs puts by symbol structure (e.g., "-C" or "-P")
        if symbol.endswith("-C-USDT"):  # call option
            # We want a call with delta ~ +0.1 (d should be positive)
@@ -342,7 +342,7 @@ def convert_to_iron_butterfly(position_state, expiry=None):
    """If the short positions form a straddle, buy wings to form an iron butterfly."""
    logging.info(f"Converting to iron butterfly: {position_state}")
    # Determine current short strikes for call and put
-   call_strike = float(position_state["call"]["symbol"].split("-")[-3])  # e.g., symbol format "BTC-<expiry>-<strike>-C-USDT"
+   call_strike = float(position_state["call"]["symbol"].split("-")[-3])  # e.g., symbol format "Symbol-<expiry>-<strike>-C-USDT"
    put_strike  = float(position_state["put"]["symbol"].split("-")[-3])
    print(f"call_strike: {call_strike}, put_strike: {put_strike}")
    # Check if strikes are effectively equal (or very close) indicating a straddle

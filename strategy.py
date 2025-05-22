@@ -40,7 +40,7 @@ logging.basicConfig(
 load_dotenv()
 API_KEY = os.getenv('API_KEY')
 API_SECRET = os.getenv('API_SECRET')
-bybit_client = DMABybit(API_KEY, API_SECRET, symbol="ETHUSDT", category="option")
+bybit_client = DMABybit(API_KEY, API_SECRET, symbol="BTCUSDT", category="option")
 
 # Logging: Initialize CSV file with headers if not exists
 LOG_FILE = os.path.join(data_dir, f'trades_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv')
@@ -59,7 +59,7 @@ def log_trade(order_link_id, symbol, side, qty, price, realized_pnl):
 # Helper: Fetch current option market data (tickers) for Symbol
 def get_iv_and_greeks(expiry=None):
    """Fetch all Symbol option tickers and return parsed data (IV, delta, etc.)"""
-   data = bybit_client.get_tickers(category="option", base_coin="ETH", exp_date=expiry)
+   data = bybit_client.get_tickers(category="option", base_coin="BTC", exp_date=expiry)
    if data.get("retCode") != 0:
        raise Exception(f"Failed to get tickers: {data.get('retMsg')}")
    # Parse the returned list of option tickers
